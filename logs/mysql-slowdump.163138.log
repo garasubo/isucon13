@@ -1,0 +1,69 @@
+Count: 15228  Time=0.01s (133s)  Lock=0.00s (0s)  Rows=1.0 (15228), isucon[isucon]@ip-192-168-0-11.ap-northeast-1.compute.internal
+  SELECT IFNULL(SUM(l2.tip), N) FROM users u
+  INNER JOIN livestreams l ON l.user_id = u.id
+  INNER JOIN livecomments l2 ON l2.livestream_id = l.id
+  WHERE u.id = N
+
+Count: 26969  Time=0.00s (32s)  Lock=0.00s (0s)  Rows=1.0 (26969), isucon[isucon]@ip-192-168-0-11.ap-northeast-1.compute.internal
+  SELECT IFNULL(SUM(l2.tip), N) FROM livestreams l INNER JOIN livecomments l2 ON l.id = l2.livestream_id WHERE l.id = N
+
+Count: 8361  Time=0.00s (18s)  Lock=0.00s (0s)  Rows=0.0 (0), isucon[isucon]@ip-192-168-0-11.ap-northeast-1.compute.internal
+  COMMIT
+
+Count: 206898  Time=0.00s (11s)  Lock=0.00s (0s)  Rows=1.0 (206898), isucon[isucon]@ip-192-168-0-11.ap-northeast-1.compute.internal
+  SELECT * FROM tags WHERE id = N
+
+Count: 344  Time=0.03s (11s)  Lock=0.00s (0s)  Rows=0.0 (0), isucon[isucon]@ip-192-168-0-11.ap-northeast-1.compute.internal
+  UPDATE reservation_slots SET slot = slot - N WHERE start_at >= N AND end_at <= N
+
+Count: 15229  Time=0.00s (8s)  Lock=0.00s (0s)  Rows=1.0 (15229), isucon[isucon]@ip-192-168-0-11.ap-northeast-1.compute.internal
+  SELECT COUNT(*) FROM users u
+  INNER JOIN livestreams l ON l.user_id = u.id
+  INNER JOIN reactions r ON r.livestream_id = l.id
+  WHERE u.id = N
+
+Count: 345  Time=0.02s (7s)  Lock=0.00s (0s)  Rows=9.7 (3350), isucon[isucon]@ip-192-168-0-11.ap-northeast-1.compute.internal
+  SELECT * FROM reservation_slots WHERE start_at >= N AND end_at <= N FOR UPDATE
+
+Count: 60027  Time=0.00s (6s)  Lock=0.00s (0s)  Rows=0.9 (56583), isucon[isucon]@ip-192-168-0-11.ap-northeast-1.compute.internal
+  SELECT image_hash FROM icons WHERE user_id = N
+
+Count: 60042  Time=0.00s (5s)  Lock=0.00s (0s)  Rows=1.0 (60042), isucon[isucon]@ip-192-168-0-11.ap-northeast-1.compute.internal
+  SELECT * FROM themes WHERE user_id = N
+
+Count: 43703  Time=0.00s (4s)  Lock=0.00s (0s)  Rows=4.7 (206903), isucon[isucon]@ip-192-168-0-11.ap-northeast-1.compute.internal
+  SELECT * FROM livestream_tags WHERE livestream_id = N
+
+Count: 1000  Time=0.00s (4s)  Lock=0.00s (0s)  Rows=0.0 (0), isucon[isucon]@ip-192-168-0-11.ap-northeast-1.compute.internal
+  INSERT INTO users (id, name, display_name, description, password) VALUES (N, 'S', 'S', 'S', 'S')
+
+Count: 26970  Time=0.00s (4s)  Lock=0.00s (0s)  Rows=1.0 (26970), isucon[isucon]@ip-192-168-0-11.ap-northeast-1.compute.internal
+  SELECT COUNT(*) FROM livestreams l INNER JOIN reactions r ON l.id = r.livestream_id WHERE l.id = N
+
+Count: 59582  Time=0.00s (4s)  Lock=0.00s (0s)  Rows=1.0 (59582), isucon[isucon]@ip-192-168-0-11.ap-northeast-1.compute.internal
+  SELECT * FROM users WHERE id = N
+
+Count: 510  Time=0.00s (2s)  Lock=0.00s (0s)  Rows=0.0 (0), isucon[isucon]@ip-192-168-0-11.ap-northeast-1.compute.internal
+  INSERT INTO themes (user_id, dark_mode) VALUES (N, true)
+
+Count: 490  Time=0.00s (2s)  Lock=0.00s (0s)  Rows=0.0 (0), isucon[isucon]@ip-192-168-0-11.ap-northeast-1.compute.internal
+  INSERT INTO themes (user_id, dark_mode) VALUES (N, false)
+
+Count: 472  Time=0.00s (1s)  Lock=0.00s (0s)  Rows=0.0 (0), isucon[isucon]@ip-192-168-0-11.ap-northeast-1.compute.internal
+  INSERT INTO icons (user_id, image, image_hash) VALUES (N, 'S', 'S')
+
+Count: 20018  Time=0.00s (1s)  Lock=0.00s (0s)  Rows=1.0 (20018), isucon[isucon]@ip-192-168-0-11.ap-northeast-1.compute.internal
+  SELECT * FROM livestreams WHERE id = N
+
+Count: 848  Time=0.00s (0s)  Lock=0.00s (0s)  Rows=8.1 (6893), isucon[isucon]@ip-192-168-0-11.ap-northeast-1.compute.internal
+  SELECT * FROM livecomments WHERE livestream_id = N ORDER BY created_at DESC
+
+Count: 318  Time=0.00s (0s)  Lock=0.00s (0s)  Rows=0.0 (0), isucon[isucon]@ip-192-168-0-11.ap-northeast-1.compute.internal
+  DELETE FROM livecomments
+  WHERE
+  livestream_id = N AND
+  comment LIKE 'S'
+
+Count: 3350  Time=0.00s (0s)  Lock=0.00s (0s)  Rows=1.0 (3350), isucon[isucon]@ip-192-168-0-11.ap-northeast-1.compute.internal
+  SELECT slot FROM reservation_slots WHERE start_at = N AND end_at = N
+

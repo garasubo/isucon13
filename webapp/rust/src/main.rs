@@ -1132,7 +1132,7 @@ async fn moderate_handler(
 
     // 配信者自身の配信に対するmoderateなのかを検証
     let owned_livestreams: Option<i64> =
-        sqlx::query_as("SELECT 1 FROM livestreams WHERE id = ? AND user_id = ? LIMIT 1")
+        sqlx::query_scalar("SELECT 1 FROM livestreams WHERE id = ? AND user_id = ? LIMIT 1")
             .bind(livestream_id)
             .bind(user_id)
             .fetch_optional(&mut *tx)

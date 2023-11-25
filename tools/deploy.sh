@@ -17,6 +17,7 @@ rsync -avr target/release/isupipe "$SERVER1:/home/isucon/webapp/rust/target/rele
 popd
 fi
 rsync -avr webapp/sql "$SERVER1:/home/isucon/webapp"
+rsync -avr webapp/pdns "$SERVER1:/home/isucon/webapp"
 
 ssh "$SERVER1" "sudo rm -f /var/log/nginx/access.log"
 ssh "$DB_SERVER" "sudo rm -f /var/log/mysql/mysql-slow.log"

@@ -14,6 +14,16 @@ const DEFAULT_USER_ID_KEY: &str = "USERID";
 const DEFAULT_USERNAME_KEY: &str = "USERNAME";
 const FALLBACK_IMAGE: &str = "../img/NoImage.jpg";
 
+lazy_static::lazy_static! {
+    static ref FALLBACK_IMAGE_BYTES: Vec<u8> = std::fs::read(FALLBACK_IMAGE).unwrap();
+    static ref FALLBACK_IMAGE_HASH: String = {
+        use sha2::digest::Digest as _;
+        let icon_hash = sha2::Sha256::digest(&*FALLBACK_IMAGE_BYTES);
+        let result: String = format!("{:x}", icon_hash);
+        result
+    };
+}
+
 #[derive(Debug, thiserror::Error)]
 enum Error {
     #[error("I/O error: {0}")]
@@ -237,6 +247,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "/api/user/:username/statistics",
             axum::routing::get(get_user_statistics_handler),
         )
+        // icon情報
         .route(
             "/api/user/:username/icon",
             axum::routing::get(get_icon_handler),
@@ -1487,6 +1498,9 @@ async fn post_icon_handler(
         .await?
         .ok_or(Error::SessionError)?;
     let user_id: i64 = sess.get(DEFAULT_USER_ID_KEY).ok_or(Error::SessionError)?;
+    use sha2::digest::Digest as _;
+    let icon_hash = sha2::Sha256::digest(&req.image);
+    let icon_hash = format!("{:x}", icon_hash);
 
     let mut tx = pool.begin().await?;
 
@@ -1495,9 +1509,10 @@ async fn post_icon_handler(
         .execute(&mut *tx)
         .await?;
 
-    let rs = sqlx::query("INSERT INTO icons (user_id, image) VALUES (?, ?)")
+    let rs = sqlx::query("INSERT INTO icons (user_id, image, image_hash) VALUES (?, ?, ?)")
         .bind(user_id)
         .bind(req.image)
+        .bind(icon_hash)
         .execute(&mut *tx)
         .await?;
     let icon_id = rs.last_insert_id() as i64;
@@ -1712,17 +1727,15 @@ async fn fill_user_response(tx: &mut MySqlConnection, user_model: UserModel) -> 
         .fetch_one(&mut *tx)
         .await?;
 
-    let image: Option<Vec<u8>> = sqlx::query_scalar("SELECT image FROM icons WHERE user_id = ?")
+    let image: Option<String> = sqlx::query_scalar("SELECT image_hash FROM icons WHERE user_id = ?")
         .bind(user_model.id)
         .fetch_optional(&mut *tx)
         .await?;
-    let image = if let Some(image) = image {
-        image
+    let icon_hash = if let Some(image_hash) = image {
+        image_hash
     } else {
-        tokio::fs::read(FALLBACK_IMAGE).await?
+        FALLBACK_IMAGE_HASH.clone()
     };
-    use sha2::digest::Digest as _;
-    let icon_hash = sha2::Sha256::digest(image);
 
     Ok(User {
         id: user_model.id,
@@ -1733,7 +1746,7 @@ async fn fill_user_response(tx: &mut MySqlConnection, user_model: UserModel) -> 
             id: theme_model.id,
             dark_mode: theme_model.dark_mode,
         },
-        icon_hash: format!("{:x}", icon_hash),
+        icon_hash,
     })
 }
 

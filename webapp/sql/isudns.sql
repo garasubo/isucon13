@@ -1,0 +1,1 @@
+ALTER TABLE isudns.records ADD INDEX record_idx(name);

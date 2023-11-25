@@ -7,6 +7,7 @@ use sqlx::mysql::{MySqlConnection, MySqlPool};
 use std::borrow::Cow;
 use std::sync::Arc;
 use std::time::Duration;
+use tracing::info;
 use uuid::Uuid;
 
 const DEFAULT_SESSION_ID_KEY: &str = "SESSIONID";
@@ -147,7 +148,7 @@ async fn initialize_handler() -> Result<axum::Json<InitializeResponse>, Error> {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if std::env::var_os("RUST_LOG").is_none() {
-        std::env::set_var("RUST_LOG", "info,tower_http=debug,axum::rejection=trace");
+        std::env::set_var("RUST_LOG", "info,axum::rejection=trace");
     }
     tracing_subscriber::fmt::init();
 
@@ -1477,7 +1478,10 @@ async fn get_icon_handler(
         .await?;
 
     if let Some(hash) = headers.get("If-None-Match") {
+        //info!("If-None-Match: {:?}", hash);
         if let Ok(hash) = hash.to_str() {
+            // remove double-quate
+            let hash = hash.trim_matches('"');
             if let Some(cached_hash) = ICON_HASH_CACHE.get(&user.id).await {
                 if hash == &cached_hash {
                     return Ok((StatusCode::NOT_MODIFIED, ()).into_response());

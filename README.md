@@ -5,6 +5,10 @@ isucon13本選用レポジトリ
 
 [スプレッドシート](https://docs.google.com/spreadsheets/d/12kknFZRLcVEQFisFzYmrZGlpUiF2w-PPw9GSFlaJcbw/edit#gid=0)
 
+[当日マニュアル](https://gist.github.com/kazeburo/bccc2d2b2b9dc307b5640ae855f3e0bf)
+
+[アプリケーションマニュアル](https://gist.github.com/kazeburo/70b352e6d51969b214f919bcf0794ba6)
+
 ## 当日までにやること
 - [ ] お昼ご飯の用意
 - [ ] このリポジトリをcloneしておく

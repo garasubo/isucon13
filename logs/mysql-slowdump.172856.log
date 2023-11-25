@@ -1,0 +1,63 @@
+Count: 33633  Time=0.00s (44s)  Lock=0.00s (0s)  Rows=1.0 (33633), isucon[isucon]@ip-192-168-0-11.ap-northeast-1.compute.internal
+  SELECT IFNULL(SUM(l2.tip), N) FROM livestreams l INNER JOIN livecomments l2 ON l.id = l2.livestream_id WHERE l.id = N
+
+Count: 240057  Time=0.00s (13s)  Lock=0.00s (0s)  Rows=1.0 (240057), isucon[isucon]@ip-192-168-0-11.ap-northeast-1.compute.internal
+  SELECT * FROM tags WHERE id = N
+
+Count: 10297  Time=0.00s (11s)  Lock=0.00s (0s)  Rows=0.0 (0), isucon[isucon]@ip-192-168-0-11.ap-northeast-1.compute.internal
+  COMMIT
+
+Count: 468  Time=0.02s (8s)  Lock=0.00s (0s)  Rows=0.0 (0), isucon[isucon]@ip-192-168-0-11.ap-northeast-1.compute.internal
+  UPDATE reservation_slots SET slot = slot - N WHERE start_at >= N AND end_at <= N
+
+Count: 74015  Time=0.00s (7s)  Lock=0.00s (0s)  Rows=0.9 (69935), isucon[isucon]@ip-192-168-0-11.ap-northeast-1.compute.internal
+  SELECT image_hash FROM icons WHERE user_id = N
+
+Count: 74033  Time=0.00s (6s)  Lock=0.00s (0s)  Rows=1.0 (74033), isucon[isucon]@ip-192-168-0-11.ap-northeast-1.compute.internal
+  SELECT * FROM themes WHERE user_id = N
+
+Count: 33635  Time=0.00s (6s)  Lock=0.00s (0s)  Rows=1.0 (33635), isucon[isucon]@ip-192-168-0-11.ap-northeast-1.compute.internal
+  SELECT COUNT(*) FROM livestreams l INNER JOIN reactions r ON l.id = r.livestream_id WHERE l.id = N
+
+Count: 469  Time=0.01s (6s)  Lock=0.00s (0s)  Rows=9.8 (4618), isucon[isucon]@ip-192-168-0-11.ap-northeast-1.compute.internal
+  SELECT * FROM reservation_slots WHERE start_at >= N AND end_at <= N FOR UPDATE
+
+Count: 50768  Time=0.00s (5s)  Lock=0.00s (0s)  Rows=4.7 (240059), isucon[isucon]@ip-192-168-0-11.ap-northeast-1.compute.internal
+  SELECT * FROM livestream_tags WHERE livestream_id = N
+
+Count: 73551  Time=0.00s (5s)  Lock=0.00s (0s)  Rows=1.0 (73551), isucon[isucon]@ip-192-168-0-11.ap-northeast-1.compute.internal
+  SELECT * FROM users WHERE id = N
+
+Count: 27971  Time=0.00s (2s)  Lock=0.00s (0s)  Rows=1.0 (27971), isucon[isucon]@ip-192-168-0-11.ap-northeast-1.compute.internal
+  SELECT * FROM livestreams WHERE id = N
+
+Count: 1268  Time=0.00s (1s)  Lock=0.00s (0s)  Rows=7.9 (9955), isucon[isucon]@ip-192-168-0-11.ap-northeast-1.compute.internal
+  SELECT * FROM livecomments WHERE livestream_id = N ORDER BY created_at DESC
+
+Count: 502  Time=0.00s (1s)  Lock=0.00s (0s)  Rows=0.0 (0), isucon[isucon]@ip-192-168-0-11.ap-northeast-1.compute.internal
+  INSERT INTO icons (user_id, image, image_hash) VALUES (N, 'S', 'S')
+
+Count: 1000  Time=0.00s (1s)  Lock=0.00s (0s)  Rows=0.0 (0), isucon[isucon]@ip-192-168-0-11.ap-northeast-1.compute.internal
+  INSERT INTO users (id, name, display_name, description, password) VALUES (N, 'S', 'S', 'S', 'S')
+
+Count: 11716  Time=0.00s (0s)  Lock=0.00s (0s)  Rows=1.0 (11716), isucon[isucon]@ip-192-168-0-11.ap-northeast-1.compute.internal
+  SELECT * FROM users WHERE name = 'S' LIMIT N
+
+Count: 312  Time=0.00s (0s)  Lock=0.00s (0s)  Rows=0.0 (0), isucon[isucon]@ip-192-168-0-11.ap-northeast-1.compute.internal
+  DELETE FROM livecomments
+  WHERE
+  livestream_id = N AND
+  comment LIKE 'S'
+
+Count: 4618  Time=0.00s (0s)  Lock=0.00s (0s)  Rows=1.0 (4618), isucon[isucon]@ip-192-168-0-11.ap-northeast-1.compute.internal
+  SELECT slot FROM reservation_slots WHERE start_at = N AND end_at = N
+
+Count: 510  Time=0.00s (0s)  Lock=0.00s (0s)  Rows=0.0 (0), isucon[isucon]@ip-192-168-0-11.ap-northeast-1.compute.internal
+  INSERT INTO themes (user_id, dark_mode) VALUES (N, true)
+
+Count: 22044  Time=0.00s (0s)  Lock=0.00s (0s)  Rows=0.0 (0), isucon[isucon]@ip-192-168-0-11.ap-northeast-1.compute.internal
+  BEGIN
+
+Count: 490  Time=0.00s (0s)  Lock=0.00s (0s)  Rows=0.0 (0), isucon[isucon]@ip-192-168-0-11.ap-northeast-1.compute.internal
+  INSERT INTO themes (user_id, dark_mode) VALUES (N, false)
+

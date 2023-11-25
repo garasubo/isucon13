@@ -3,7 +3,7 @@
 set -euxo pipefail
 
 SERVER=${SERVER:-isucon1}
-DB_SERVER=${DB_SERVER:-isucon1}
+DB_SERVER=${DB_SERVER:-isucon2}
 ID=$(date +%H%M%S)
 
 cd "$(dirname "$0")"

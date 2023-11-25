@@ -5,7 +5,7 @@ set -euxo pipefail
 SERVER1=${SERVER:-isucon1}
 SERVER2=${SERVER:-isucon2}
 SERVER3=${SERVER:-isucon3}
-DB_SERVER=isucon1
+DB_SERVER=isucon2
 
 cd "$(dirname "$0")/../"
 

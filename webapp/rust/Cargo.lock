@@ -1051,6 +1051,7 @@ dependencies = [
  "bcrypt",
  "chrono",
  "hyper",
+ "lazy_static",
  "listenfd",
  "num-traits",
  "serde",

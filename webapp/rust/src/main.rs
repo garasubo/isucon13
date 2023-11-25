@@ -1477,9 +1477,17 @@ async fn get_icon_handler(
         .await?;
 
     if let Some(hash) = headers.get("If-None-Match") {
-        let hash = hash.to_str().unwrap_or("");
-        if let Some(cached_hash) = ICON_HASH_CACHE.get(&user.id).await {
-            if hash == &cached_hash {
+        if let Ok(hash) = hash.to_str() {
+            if let Some(cached_hash) = ICON_HASH_CACHE.get(&user.id).await {
+                if hash == &cached_hash {
+                    return Ok((StatusCode::NOT_MODIFIED, ()).into_response());
+                }
+            }
+            let image_hash: Option<String> = sqlx::query_scalar("SELECT image_hash FROM icons WHERE user_id = ? LIMIT 1")
+                .bind(user.id)
+                .fetch_optional(&mut *tx)
+                .await?;
+            if image_hash == Some(hash.to_owned()) {
                 return Ok((StatusCode::NOT_MODIFIED, ()).into_response());
             }
         }
@@ -1492,7 +1500,7 @@ async fn get_icon_handler(
 
     let headers = [(axum::http::header::CONTENT_TYPE, "image/jpeg")];
     if let Some(image) = image {
-        ICON_HASH_CACHE.insert(user.id, image.1.clone()).await;
+        ICON_HASH_CACHE.insert(user.id, image.1).await;
         Ok((headers, image.0).into_response())
     } else {
         Ok((headers, FALLBACK_IMAGE_BYTES.clone()).into_response())

@@ -1,0 +1,75 @@
+Count: 6569  Time=0.02s (143s)  Lock=0.00s (0s)  Rows=1.0 (6569), isucon[isucon]@localhost
+  SELECT IFNULL(SUM(l2.tip), N) FROM users u
+  INNER JOIN livestreams l ON l.user_id = u.id
+  INNER JOIN livecomments l2 ON l2.livestream_id = l.id
+  WHERE u.id = N
+
+Count: 6108  Time=0.01s (52s)  Lock=0.00s (0s)  Rows=0.4 (2170), isudns[isudns]@localhost
+  SELECT content,ttl,prio,type,domain_id,disabled,name,auth FROM records WHERE disabled=N and name='S' and domain_id=N
+
+Count: 4852  Time=0.01s (33s)  Lock=0.00s (0s)  Rows=0.5 (2545), isudns[isudns]@localhost
+  SELECT content,ttl,prio,type,domain_id,disabled,name,auth FROM records WHERE disabled=N and type='S' and name='S'
+
+Count: 87926  Time=0.00s (22s)  Lock=0.00s (0s)  Rows=0.0 (0), isucon[isucon]@localhost
+  DELETE FROM livecomments
+  WHERE
+  id = N AND
+  livestream_id = N AND
+  (SELECT COUNT(*)
+  FROM
+  (SELECT 'S' AS text) AS texts
+  INNER JOIN
+  (SELECT CONCAT('S', 'S', 'S')	AS pattern) AS patterns
+  ON texts.text LIKE patterns.pattern) >= N
+
+Count: 80874  Time=0.00s (15s)  Lock=0.00s (0s)  Rows=1.0 (80874), isucon[isucon]@localhost
+  SELECT * FROM tags WHERE id = N
+
+Count: 4330  Time=0.00s (15s)  Lock=0.00s (0s)  Rows=0.0 (0), isucon[isucon]@localhost
+  COMMIT
+
+Count: 165  Time=0.06s (10s)  Lock=0.00s (0s)  Rows=0.0 (0), isucon[isucon]@localhost
+  UPDATE reservation_slots SET slot = slot - N WHERE start_at >= N AND end_at <= N
+
+Count: 6573  Time=0.00s (9s)  Lock=0.00s (0s)  Rows=1.0 (6573), isucon[isucon]@localhost
+  SELECT COUNT(*) FROM users u
+  INNER JOIN livestreams l ON l.user_id = u.id
+  INNER JOIN reactions r ON r.livestream_id = l.id
+  WHERE u.id = N
+
+Count: 166  Time=0.05s (8s)  Lock=0.00s (0s)  Rows=9.2 (1534), isucon[isucon]@localhost
+  SELECT * FROM reservation_slots WHERE start_at >= N AND end_at <= N FOR UPDATE
+
+Count: 29192  Time=0.00s (8s)  Lock=0.00s (0s)  Rows=0.9 (25949), isucon[isucon]@localhost
+  SELECT image_hash FROM icons WHERE user_id = N
+
+Count: 29204  Time=0.00s (7s)  Lock=0.00s (0s)  Rows=1.0 (29204), isucon[isucon]@localhost
+  SELECT * FROM themes WHERE user_id = N
+
+Count: 34901  Time=0.00s (7s)  Lock=0.00s (0s)  Rows=0.0 (4), 2users@localhost
+  #
+
+Count: 6918  Time=0.00s (6s)  Lock=0.00s (0s)  Rows=0.0 (0), isudns[isudns]@localhost
+  select kind,content from domains, domainmetadata where domainmetadata.domain_id=domains.id and name='S'
+
+Count: 28919  Time=0.00s (6s)  Lock=0.00s (0s)  Rows=1.0 (28919), isucon[isucon]@localhost
+  SELECT * FROM users WHERE id = N
+
+Count: 18632  Time=0.00s (5s)  Lock=0.00s (0s)  Rows=4.3 (80880), isucon[isucon]@localhost
+  SELECT * FROM livestream_tags WHERE livestream_id = N
+
+Count: 272  Time=0.02s (5s)  Lock=0.00s (0s)  Rows=0.0 (0), isudns[isudns]@localhost
+  delete from records where domain_id=N and name='S' and type='S'
+
+Count: 15180  Time=0.00s (4s)  Lock=0.00s (0s)  Rows=1.0 (15180), isucon[isucon]@localhost
+  SELECT IFNULL(SUM(l2.tip), N) FROM livestreams l INNER JOIN livecomments l2 ON l.id = l2.livestream_id WHERE l.id = N
+
+Count: 1000  Time=0.00s (4s)  Lock=0.00s (0s)  Rows=0.0 (0), isucon[isucon]@localhost
+  INSERT INTO users (id, name, display_name, description, password) VALUES (N, 'S', 'S', 'S', 'S')
+
+Count: 52  Time=0.06s (3s)  Lock=0.00s (0s)  Rows=1.3 (67), isucon[isucon]@localhost
+  SELECT * FROM ng_words WHERE livestream_id = N
+
+Count: 13261  Time=0.00s (3s)  Lock=0.00s (0s)  Rows=1.0 (13261), isucon[isucon]@localhost
+  SELECT * FROM livestreams WHERE id = N
+

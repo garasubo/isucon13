@@ -5,8 +5,11 @@ use axum_extra::extract::cookie::SignedCookieJar;
 use chrono::{DateTime, NaiveDate, TimeZone, Utc};
 use sqlx::mysql::{MySqlConnection, MySqlPool};
 use std::borrow::Cow;
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
+use num_traits::ToPrimitive;
+use sqlx::types::BigDecimal;
 use tracing::info;
 use uuid::Uuid;
 
@@ -1466,20 +1469,22 @@ async fn get_icon_handler(
                     return Ok((StatusCode::NOT_MODIFIED, ()).into_response());
                 }
             }
-            let image_hash: Option<String> = sqlx::query_scalar("SELECT image_hash FROM icons WHERE user_id = ? LIMIT 1")
-                .bind(user.id)
-                .fetch_optional(&mut *tx)
-                .await?;
+            let image_hash: Option<String> =
+                sqlx::query_scalar("SELECT image_hash FROM icons WHERE user_id = ? LIMIT 1")
+                    .bind(user.id)
+                    .fetch_optional(&mut *tx)
+                    .await?;
             if image_hash == Some(hash.to_owned()) {
                 return Ok((StatusCode::NOT_MODIFIED, ()).into_response());
             }
         }
     }
 
-    let image: Option<(Vec<u8>, String)> = sqlx::query_as("SELECT image, image_hash FROM icons WHERE user_id = ? LIMIT 1")
-        .bind(user.id)
-        .fetch_optional(&mut *tx)
-        .await?;
+    let image: Option<(Vec<u8>, String)> =
+        sqlx::query_as("SELECT image, image_hash FROM icons WHERE user_id = ? LIMIT 1")
+            .bind(user.id)
+            .fetch_optional(&mut *tx)
+            .await?;
 
     let headers = [(axum::http::header::CONTENT_TYPE, "image/jpeg")];
     if let Some(image) = image {
@@ -1613,7 +1618,9 @@ async fn register_handler(
             String::from_utf8_lossy(&output.stderr),
         )));
     }
-    ICON_HASH_CACHE.insert(user_id, FALLBACK_IMAGE_HASH.clone()).await;
+    ICON_HASH_CACHE
+        .insert(user_id, FALLBACK_IMAGE_HASH.clone())
+        .await;
 
     let user = fill_user_response(
         &mut tx,
@@ -1734,10 +1741,11 @@ async fn fill_user_response(tx: &mut MySqlConnection, user_model: UserModel) -> 
         .fetch_one(&mut *tx)
         .await?;
 
-    let image: Option<String> = sqlx::query_scalar("SELECT image_hash FROM icons WHERE user_id = ?")
-        .bind(user_model.id)
-        .fetch_optional(&mut *tx)
-        .await?;
+    let image: Option<String> =
+        sqlx::query_scalar("SELECT image_hash FROM icons WHERE user_id = ?")
+            .bind(user_model.id)
+            .fetch_optional(&mut *tx)
+            .await?;
     let icon_hash = if let Some(image_hash) = image {
         image_hash
     } else {
@@ -1809,6 +1817,12 @@ impl sqlx::Decode<'_, sqlx::MySql> for MysqlDecimal {
                 .to_i64()
                 .expect("failed to convert DECIMAL type to i64");
             Ok(Self(n))
+        } else if sqlx::types::BigDecimal::compatible(&type_info) {
+            use num_traits::ToPrimitive as _;
+            let n = sqlx::types::BigDecimal::decode(value)?
+                .to_i64()
+                .expect("failed to convert BigDECIMAL type to i64");
+            Ok(Self(n))
         } else {
             todo!()
         }
@@ -1841,7 +1855,7 @@ async fn get_user_statistics_handler(
 
     let mut tx = pool.begin().await?;
 
-    let user: UserModel = sqlx::query_as("SELECT * FROM users WHERE name = ?")
+    let user: UserModel = sqlx::query_as("SELECT * FROM users WHERE name = ? LIMIT 1")
         .bind(&username)
         .fetch_optional(&mut *tx)
         .await?
@@ -1853,35 +1867,43 @@ async fn get_user_statistics_handler(
         .await?;
 
     let mut ranking = Vec::new();
-    for user in users {
-        let query = r#"
-        SELECT COUNT(*) FROM users u
+    let mut score_map = HashMap::new();
+    let query = r#"
+        SELECT u.name, COUNT(*) FROM users u
         INNER JOIN livestreams l ON l.user_id = u.id
         INNER JOIN reactions r ON r.livestream_id = l.id
-        WHERE u.id = ?
+        GROUP BY u.name
         "#;
-        let MysqlDecimal(reactions) = sqlx::query_scalar(query)
-            .bind(user.id)
-            .fetch_one(&mut *tx)
-            .await?;
+    let reactions: Vec<(String, i64)> = sqlx::query_as(query).fetch_all(&mut *tx).await?;
 
-        let query = r#"
-        SELECT IFNULL(SUM(l2.tip), 0) FROM users u
+    for (username, score) in reactions.iter() {
+        score_map.insert(username.to_string(), *score);
+    }
+
+    let query = r#"
+        SELECT u.name, IFNULL(SUM(l2.tip), 0) FROM users u
         INNER JOIN livestreams l ON l.user_id = u.id
         INNER JOIN livecomments l2 ON l2.livestream_id = l.id
-        WHERE u.id = ?
+        GROUP BY u.name
         "#;
-        let MysqlDecimal(tips) = sqlx::query_scalar(query)
-            .bind(user.id)
-            .fetch_one(&mut *tx)
-            .await?;
+    let tips: Vec<(String, BigDecimal)> = sqlx::query_as(query).fetch_all(&mut *tx).await?;
 
-        let score = reactions + tips;
+    for (username, score) in tips.iter() {
+        let score = score.to_i64().unwrap();
+        if let Some(s) = score_map.get_mut(username) {
+            *s += score;
+        } else {
+            score_map.insert(username.to_string(), score);
+        }
+    }
+    for user in users {
+        let score = score_map.get(&user.name).copied().unwrap_or(0);
         ranking.push(UserRankingEntry {
             username: user.name,
             score,
         });
     }
+
     ranking.sort_by(|a, b| {
         a.score
             .cmp(&b.score)
@@ -1907,38 +1929,19 @@ async fn get_user_statistics_handler(
         .await?;
 
     // ライブコメント数、チップ合計
-    let mut total_livecomments = 0;
-    let mut total_tip = 0;
-    let livestreams: Vec<LivestreamModel> =
-        sqlx::query_as("SELECT * FROM livestreams WHERE user_id = ?")
+    let (total_livecomments, total_tip): (i64, BigDecimal)  =
+        sqlx::query_as("SELECT COUNT(*), SUM(lc.tip) FROM livestreams ls INNER JOIN livecomments lc ON lc.livestream_id = ls.id WHERE ls.user_id = ?")
             .bind(user.id)
-            .fetch_all(&mut *tx)
+            .fetch_one(&mut *tx)
             .await?;
 
-    for livestream in &livestreams {
-        let livecomments: Vec<LivecommentModel> =
-            sqlx::query_as("SELECT * FROM livecomments WHERE livestream_id = ?")
-                .bind(livestream.id)
-                .fetch_all(&mut *tx)
-                .await?;
-
-        for livecomment in livecomments {
-            total_tip += livecomment.tip;
-            total_livecomments += 1;
-        }
-    }
-
     // 合計視聴者数
-    let mut viewers_count = 0;
-    for livestream in livestreams {
-        let MysqlDecimal(cnt) = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM livestream_viewers_history WHERE livestream_id = ?",
-        )
-        .bind(livestream.id)
+    let MysqlDecimal(viewers_count) = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM livestreams l INNER JOIN livestream_viewers_history h ON h.livestream_id = l.id WHERE l.user_id = ?",
+    ).bind(user.id)
         .fetch_one(&mut *tx)
         .await?;
-        viewers_count += cnt;
-    }
+
 
     // お気に入り絵文字
     let query = r#"
@@ -1961,8 +1964,8 @@ async fn get_user_statistics_handler(
         rank,
         viewers_count,
         total_reactions,
-        total_livecomments,
-        total_tip,
+        total_livecomments: total_livecomments,
+        total_tip: total_tip.to_i64().unwrap(),
         favorite_emoji,
     }))
 }

@@ -1,15 +1,15 @@
-TRUNCATE TABLE themes;
-TRUNCATE TABLE icons;
-TRUNCATE TABLE reservation_slots;
-TRUNCATE TABLE livestream_viewers_history;
-TRUNCATE TABLE livecomment_reports;
-TRUNCATE TABLE ng_words;
-TRUNCATE TABLE reactions;
-TRUNCATE TABLE tags;
-TRUNCATE TABLE livestream_tags;
-TRUNCATE TABLE livecomments;
-TRUNCATE TABLE livestreams;
-TRUNCATE TABLE users;
+DROP TABLE themes;
+DROP TABLE icons;
+DROP TABLE reservation_slots;
+DROP TABLE livestream_viewers_history;
+DROP TABLE livecomment_reports;
+DROP TABLE ng_words;
+DROP TABLE reactions;
+DROP TABLE tags;
+DROP TABLE livestream_tags;
+DROP TABLE livecomments;
+DROP TABLE livestreams;
+DROP TABLE users;
 
 ALTER TABLE `themes` auto_increment = 1;
 ALTER TABLE `icons` auto_increment = 1;

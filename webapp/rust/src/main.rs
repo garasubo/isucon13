@@ -1,11 +1,13 @@
 use async_session::{CookieStore, SessionStore};
 use axum::extract::{Path, Query, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use axum_extra::extract::cookie::SignedCookieJar;
 use chrono::{DateTime, NaiveDate, TimeZone, Utc};
 use sqlx::mysql::{MySqlConnection, MySqlPool};
 use std::borrow::Cow;
 use std::sync::Arc;
+use std::time::Duration;
+use tracing::info;
 use uuid::Uuid;
 
 const DEFAULT_SESSION_ID_KEY: &str = "SESSIONID";
@@ -22,6 +24,11 @@ lazy_static::lazy_static! {
         let result: String = format!("{:x}", icon_hash);
         result
     };
+
+    static ref ICON_HASH_CACHE: moka::future::Cache<i64, String> = moka::future::Cache::builder()
+        .max_capacity(100_0000)
+        .time_to_live(Duration::from_secs(90))
+        .build();
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -123,6 +130,7 @@ fn build_mysql_options() -> sqlx::mysql::MySqlConnectOptions {
 }
 
 async fn initialize_handler() -> Result<axum::Json<InitializeResponse>, Error> {
+    ICON_HASH_CACHE.invalidate_all();
     let output = tokio::process::Command::new("../sql/init.sh")
         .output()
         .await?;
@@ -140,7 +148,7 @@ async fn initialize_handler() -> Result<axum::Json<InitializeResponse>, Error> {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if std::env::var_os("RUST_LOG").is_none() {
-        std::env::set_var("RUST_LOG", "info,tower_http=debug,axum::rejection=trace");
+        std::env::set_var("RUST_LOG", "info,axum::rejection=trace");
     }
     tracing_subscriber::fmt::init();
 
@@ -1456,6 +1464,7 @@ struct PostIconResponse {
 }
 
 async fn get_icon_handler(
+    headers: HeaderMap,
     State(AppState { pool, .. }): State<AppState>,
     Path((username,)): Path<(String,)>,
 ) -> Result<axum::response::Response, Error> {
@@ -1463,25 +1472,42 @@ async fn get_icon_handler(
 
     let mut tx = pool.begin().await?;
 
-    let user: UserModel = sqlx::query_as("SELECT * FROM users WHERE name = ?")
+    let user: UserModel = sqlx::query_as("SELECT * FROM users WHERE name = ? LIMIT 1")
         .bind(username)
         .fetch_one(&mut *tx)
         .await?;
 
-    let image: Option<Vec<u8>> = sqlx::query_scalar("SELECT image FROM icons WHERE user_id = ?")
+    if let Some(hash) = headers.get("If-None-Match") {
+        //info!("If-None-Match: {:?}", hash);
+        if let Ok(hash) = hash.to_str() {
+            // remove double-quate
+            let hash = hash.trim_matches('"');
+            if let Some(cached_hash) = ICON_HASH_CACHE.get(&user.id).await {
+                if hash == &cached_hash {
+                    return Ok((StatusCode::NOT_MODIFIED, ()).into_response());
+                }
+            }
+            let image_hash: Option<String> = sqlx::query_scalar("SELECT image_hash FROM icons WHERE user_id = ? LIMIT 1")
+                .bind(user.id)
+                .fetch_optional(&mut *tx)
+                .await?;
+            if image_hash == Some(hash.to_owned()) {
+                return Ok((StatusCode::NOT_MODIFIED, ()).into_response());
+            }
+        }
+    }
+
+    let image: Option<(Vec<u8>, String)> = sqlx::query_as("SELECT image, image_hash FROM icons WHERE user_id = ? LIMIT 1")
         .bind(user.id)
         .fetch_optional(&mut *tx)
         .await?;
 
     let headers = [(axum::http::header::CONTENT_TYPE, "image/jpeg")];
     if let Some(image) = image {
-        Ok((headers, image).into_response())
+        ICON_HASH_CACHE.insert(user.id, image.1).await;
+        Ok((headers, image.0).into_response())
     } else {
-        let file = tokio::fs::File::open(FALLBACK_IMAGE).await.unwrap();
-        let stream = tokio_util::io::ReaderStream::new(file);
-        let body = axum::body::StreamBody::new(stream);
-
-        Ok((headers, body).into_response())
+        Ok((headers, FALLBACK_IMAGE_BYTES.clone()).into_response())
     }
 }
 
@@ -1512,12 +1538,13 @@ async fn post_icon_handler(
     let rs = sqlx::query("INSERT INTO icons (user_id, image, image_hash) VALUES (?, ?, ?)")
         .bind(user_id)
         .bind(req.image)
-        .bind(icon_hash)
+        .bind(icon_hash.clone())
         .execute(&mut *tx)
         .await?;
     let icon_id = rs.last_insert_id() as i64;
 
     tx.commit().await?;
+    ICON_HASH_CACHE.insert(user_id, icon_hash).await;
 
     Ok((
         StatusCode::CREATED,
@@ -1607,6 +1634,7 @@ async fn register_handler(
             String::from_utf8_lossy(&output.stderr),
         )));
     }
+    ICON_HASH_CACHE.insert(user_id, FALLBACK_IMAGE_HASH.clone()).await;
 
     let user = fill_user_response(
         &mut tx,

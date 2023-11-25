@@ -1131,19 +1131,20 @@ async fn moderate_handler(
     let mut tx = pool.begin().await?;
 
     // 配信者自身の配信に対するmoderateなのかを検証
-    let owned_livestreams: Vec<LivestreamModel> =
-        sqlx::query_as("SELECT * FROM livestreams WHERE id = ? AND user_id = ?")
+    let owned_livestreams: Option<i64> =
+        sqlx::query_as("SELECT 1 FROM livestreams WHERE id = ? AND user_id = ? LIMIT 1")
             .bind(livestream_id)
             .bind(user_id)
-            .fetch_all(&mut *tx)
+            .fetch_optional(&mut *tx)
             .await?;
-    if owned_livestreams.is_empty() {
+    if owned_livestreams.is_none() {
         return Err(Error::BadRequest(
             "A streamer can't moderate livestreams that other streamers own".into(),
         ));
     }
 
     let created_at = Utc::now().timestamp();
+    let pattern = format!("%{}%", req.ng_word);
     let rs = sqlx::query(
         "INSERT INTO ng_words(user_id, livestream_id, word, created_at) VALUES (?, ?, ?, ?)",
     )
@@ -1155,40 +1156,18 @@ async fn moderate_handler(
     .await?;
     let word_id = rs.last_insert_id() as i64;
 
-    let ngwords: Vec<NgWord> = sqlx::query_as("SELECT * FROM ng_words WHERE livestream_id = ?")
-        .bind(livestream_id)
-        .fetch_all(&mut *tx)
-        .await?;
-
     // NGワードにヒットする過去の投稿も全削除する
-    for ngword in ngwords {
-        // ライブコメント一覧取得
-        let livecomments: Vec<LivecommentModel> = sqlx::query_as("SELECT * FROM livecomments")
-            .fetch_all(&mut *tx)
-            .await?;
-
-        for livecomment in livecomments {
-            let query = r#"
-            DELETE FROM livecomments
-            WHERE
-            id = ? AND
-            livestream_id = ? AND
-            (SELECT COUNT(*)
-            FROM
-            (SELECT ? AS text) AS texts
-            INNER JOIN
-            (SELECT CONCAT('%', ?, '%')	AS pattern) AS patterns
-            ON texts.text LIKE patterns.pattern) >= 1
-            "#;
-            sqlx::query(query)
-                .bind(livecomment.id)
-                .bind(livestream_id)
-                .bind(livecomment.comment)
-                .bind(&ngword.word)
-                .execute(&mut *tx)
-                .await?;
-        }
-    }
+    let query = r#"
+    DELETE FROM livecomments
+    WHERE
+    livestream_id = ? AND
+    comment LIKE ?
+    "#;
+    sqlx::query(query)
+        .bind(livestream_id)
+        .bind(pattern)
+        .execute(&mut *tx)
+        .await?;
 
     tx.commit().await?;
 

@@ -807,11 +807,11 @@ async fn fill_livestream_response(
     tx: &mut MySqlConnection,
     livestream_model: LivestreamModel,
 ) -> sqlx::Result<Livestream> {
-    let owner_model: UserModel = sqlx::query_as("SELECT * FROM users WHERE id = ?")
+    let owner_model: FilledUserModel = sqlx::query_as("SELECT u.id as id, u.name as name, u.display_name as display_name, u.description as description, t.id as theme_id, t.dark_mode as dark_mode, i.image_hash as icon_hash FROM users u JOIN themes t ON u.id = t.user_id LEFT OUTER JOIN icons i ON u.id = i.user_id  WHERE u.id = ?")
         .bind(livestream_model.user_id)
         .fetch_one(&mut *tx)
         .await?;
-    let owner = fill_user_response(tx, owner_model).await?;
+    let owner: User = owner_model.into();
 
     let livestream_tag_models: Vec<LivestreamTagModel> =
         sqlx::query_as("SELECT * FROM livestream_tags WHERE livestream_id = ?")
@@ -1189,11 +1189,11 @@ async fn fill_livecomment_response(
     tx: &mut MySqlConnection,
     livecomment_model: LivecommentModel,
 ) -> sqlx::Result<Livecomment> {
-    let comment_owner_model: UserModel = sqlx::query_as("SELECT * FROM users WHERE id = ?")
+    let comment_owner_model: FilledUserModel = sqlx::query_as("SELECT u.id as id, u.name as name, u.display_name as display_name, u.description as description, t.id as theme_id, t.dark_mode as dark_mode, i.image_hash as icon_hash FROM users u JOIN themes t ON u.id = t.user_id LEFT OUTER JOIN icons i ON u.id = i.user_id  WHERE u.id = ?")
         .bind(livecomment_model.user_id)
         .fetch_one(&mut *tx)
         .await?;
-    let comment_owner = fill_user_response(&mut *tx, comment_owner_model).await?;
+    let comment_owner = comment_owner_model.into();
 
     let livestream_model: LivestreamModel =
         sqlx::query_as("SELECT * FROM livestreams WHERE id = ?")
@@ -1216,11 +1216,11 @@ async fn fill_livecomment_report_response(
     tx: &mut MySqlConnection,
     report_model: LivecommentReportModel,
 ) -> sqlx::Result<LivecommentReport> {
-    let reporter_model: UserModel = sqlx::query_as("SELECT * FROM users WHERE id = ?")
+    let reporter_model: FilledUserModel = sqlx::query_as("SELECT u.id as id, u.name as name, u.display_name as display_name, u.description as description, t.id as theme_id, t.dark_mode as dark_mode, i.image_hash as icon_hash FROM users u JOIN themes t ON u.id = t.user_id LEFT OUTER JOIN icons i ON u.id = i.user_id  WHERE u.id = ?")
         .bind(report_model.user_id)
         .fetch_one(&mut *tx)
         .await?;
-    let reporter = fill_user_response(&mut *tx, reporter_model).await?;
+    let reporter: User = reporter_model.into();
 
     let livecomment_model: LivecommentModel =
         sqlx::query_as("SELECT * FROM livecomments WHERE id = ?")
@@ -1348,11 +1348,11 @@ async fn fill_reaction_response(
     tx: &mut MySqlConnection,
     reaction_model: ReactionModel,
 ) -> sqlx::Result<Reaction> {
-    let user_model: UserModel = sqlx::query_as("SELECT * FROM users WHERE id = ?")
+    let user_model: FilledUserModel = sqlx::query_as("SELECT u.id as id, u.name as name, u.display_name as display_name, u.description as description, t.id as theme_id, t.dark_mode as dark_mode, i.image_hash as icon_hash FROM users u JOIN themes t ON u.id = t.user_id LEFT OUTER JOIN icons i ON u.id = i.user_id  WHERE u.id = ?")
         .bind(reaction_model.user_id)
         .fetch_one(&mut *tx)
         .await?;
-    let user = fill_user_response(&mut *tx, user_model).await?;
+    let user: User = user_model.into();
 
     let livestream_model: LivestreamModel =
         sqlx::query_as("SELECT * FROM livestreams WHERE id = ?")
@@ -1378,6 +1378,34 @@ struct UserModel {
     description: Option<String>,
     #[sqlx(default, rename = "password")]
     hashed_password: Option<String>,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct FilledUserModel {
+    id: i64,
+    name: String,
+    display_name: Option<String>,
+    description: Option<String>,
+    theme_id: i64,
+    dark_mode: bool,
+    icon_hash: Option<String>,
+}
+
+impl From<FilledUserModel> for User {
+    fn from(model: FilledUserModel) -> Self {
+        User {
+            id: model.id,
+            name: model.name,
+            display_name: model.display_name,
+            description: model.description,
+            theme: Theme {
+                id: model.theme_id,
+                dark_mode: model.dark_mode,
+            },
+            icon_hash: model.icon_hash.unwrap_or_else(|| FALLBACK_IMAGE_HASH.clone()),
+        }
+    }
+
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -1554,19 +1582,15 @@ async fn get_me_handler(
         .ok_or(Error::SessionError)?;
     let user_id: i64 = sess.get(DEFAULT_USER_ID_KEY).ok_or(Error::SessionError)?;
 
-    let mut tx = pool.begin().await?;
-
-    let user_model: UserModel = sqlx::query_as("SELECT * FROM users WHERE id = ?")
+    let user_model: FilledUserModel = sqlx::query_as("SELECT u.id as id, u.name as name, u.display_name as display_name, u.description as description, t.id as theme_id, t.dark_mode as dark_mode, i.image_hash as icon_hash FROM users u JOIN themes t ON u.id = t.user_id LEFT OUTER JOIN icons i ON u.id = i.user_id  WHERE u.id = ?")
         .bind(user_id)
-        .fetch_optional(&mut *tx)
+        .fetch_optional(&pool)
         .await?
         .ok_or(Error::NotFound(
             "not found user that has the userid in session".into(),
         ))?;
 
-    let user = fill_user_response(&mut tx, user_model).await?;
-
-    tx.commit().await?;
+    let user: User = user_model.into();
 
     Ok(axum::Json(user))
 }
@@ -1601,11 +1625,12 @@ async fn register_handler(
     .await?;
     let user_id = result.last_insert_id() as i64;
 
-    sqlx::query("INSERT INTO themes (user_id, dark_mode) VALUES(?, ?)")
+    let result = sqlx::query("INSERT INTO themes (user_id, dark_mode) VALUES(?, ?)")
         .bind(user_id)
         .bind(req.theme.dark_mode)
         .execute(&mut *tx)
         .await?;
+    let theme_id =  result.last_insert_id() as i64;
 
     let output = tokio::process::Command::new("pdnsutil")
         .arg("add-record")
@@ -1627,19 +1652,19 @@ async fn register_handler(
         .insert(user_id, FALLBACK_IMAGE_HASH.clone())
         .await;
 
-    let user = fill_user_response(
-        &mut tx,
-        UserModel {
-            id: user_id,
-            name: req.name,
-            display_name: Some(req.display_name),
-            description: Some(req.description),
-            hashed_password: Some(hashed_password),
-        },
-    )
-    .await?;
-
     tx.commit().await?;
+
+    let user: User = User {
+        id: user_id,
+        name: req.name,
+        display_name: Some(req.display_name),
+        description: Some(req.description),
+        theme: Theme {
+            id: theme_id,
+            dark_mode: req.theme.dark_mode,
+        },
+        icon_hash: FALLBACK_IMAGE_HASH.clone(),
+    };
 
     Ok((StatusCode::CREATED, axum::Json(user)))
 }
@@ -1705,19 +1730,16 @@ async fn get_user_handler(
 ) -> Result<axum::Json<User>, Error> {
     verify_user_session(&jar).await?;
 
-    let mut tx = pool.begin().await?;
 
-    let user_model: UserModel = sqlx::query_as("SELECT * FROM users WHERE name = ?")
+    let user_model: FilledUserModel = sqlx::query_as("SELECT u.id as id, u.name as name, u.display_name as display_name, u.description as description, t.id as theme_id, t.dark_mode as dark_mode, i.image_hash as icon_hash FROM users u JOIN themes t ON u.id = t.user_id LEFT OUTER JOIN icons i ON u.id = i.user_id  WHERE u.name = ?")
         .bind(username)
-        .fetch_optional(&mut *tx)
+        .fetch_optional(&pool)
         .await?
         .ok_or(Error::NotFound(
             "not found user that has the given username".into(),
         ))?;
+    let user: User = user_model.into();
 
-    let user = fill_user_response(&mut tx, user_model).await?;
-
-    tx.commit().await?;
 
     Ok(axum::Json(user))
 }
@@ -1738,36 +1760,6 @@ async fn verify_user_session(jar: &SignedCookieJar) -> Result<(), Error> {
         return Err(Error::Unauthorized("session has expired".into()));
     }
     Ok(())
-}
-
-async fn fill_user_response(tx: &mut MySqlConnection, user_model: UserModel) -> sqlx::Result<User> {
-    let theme_model: ThemeModel = sqlx::query_as("SELECT * FROM themes WHERE user_id = ?")
-        .bind(user_model.id)
-        .fetch_one(&mut *tx)
-        .await?;
-
-    let image: Option<String> =
-        sqlx::query_scalar("SELECT image_hash FROM icons WHERE user_id = ?")
-            .bind(user_model.id)
-            .fetch_optional(&mut *tx)
-            .await?;
-    let icon_hash = if let Some(image_hash) = image {
-        image_hash
-    } else {
-        FALLBACK_IMAGE_HASH.clone()
-    };
-
-    Ok(User {
-        id: user_model.id,
-        name: user_model.name,
-        display_name: user_model.display_name,
-        description: user_model.description,
-        theme: Theme {
-            id: theme_model.id,
-            dark_mode: theme_model.dark_mode,
-        },
-        icon_hash,
-    })
 }
 
 #[derive(Debug, serde::Serialize)]

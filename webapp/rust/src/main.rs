@@ -308,7 +308,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-#[derive(Debug, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize)]
 struct Tag {
     id: i64,
     name: String,
@@ -391,7 +391,7 @@ struct LivestreamModel {
     end_at: i64,
 }
 
-#[derive(Debug, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize)]
 struct Livestream {
     id: i64,
     owner: User,
@@ -528,8 +528,11 @@ async fn reserve_livestream_handler(
             .await?;
     }
 
+    let owner = get_user(&mut *tx, user_id).await?;
+
     let livestream = fill_livestream_response(
         &mut tx,
+        &owner,
         LivestreamModel {
             id: livestream_id,
             user_id,
@@ -603,7 +606,8 @@ async fn search_livestreams_handler(
 
     let mut livestreams = Vec::with_capacity(livestream_models.len());
     for livestream_model in livestream_models {
-        let livestream = fill_livestream_response(&mut tx, livestream_model).await?;
+        let owner = get_user(&mut tx, livestream_model.user_id).await?;
+        let livestream = fill_livestream_response(&mut tx, &owner, livestream_model).await?;
         livestreams.push(livestream);
     }
 
@@ -633,8 +637,9 @@ async fn get_my_livestreams_handler(
             .fetch_all(&mut *tx)
             .await?;
     let mut livestreams = Vec::with_capacity(livestream_models.len());
+    let owner = get_user(&mut tx, user_id).await?;
     for livestream_model in livestream_models {
-        let livestream = fill_livestream_response(&mut tx, livestream_model).await?;
+        let livestream = fill_livestream_response(&mut tx, &owner, livestream_model).await?;
         livestreams.push(livestream);
     }
 
@@ -664,8 +669,9 @@ async fn get_user_livestreams_handler(
             .fetch_all(&mut *tx)
             .await?;
     let mut livestreams = Vec::with_capacity(livestream_models.len());
+    let owner = get_user(&mut tx, user.id).await?;
     for livestream_model in livestream_models {
-        let livestream = fill_livestream_response(&mut tx, livestream_model).await?;
+        let livestream = fill_livestream_response(&mut tx, &owner, livestream_model).await?;
         livestreams.push(livestream);
     }
 
@@ -750,8 +756,9 @@ async fn get_livestream_handler(
             .ok_or(Error::NotFound(
                 "not found livestream that has the given id".into(),
             ))?;
+    let user = get_user(&mut tx, livestream_model.user_id).await?;
 
-    let livestream = fill_livestream_response(&mut tx, livestream_model).await?;
+    let livestream = fill_livestream_response(&mut tx, &user, livestream_model).await?;
 
     tx.commit().await?;
 
@@ -803,39 +810,42 @@ async fn get_livecomment_reports_handler(
     Ok(axum::Json(reports))
 }
 
+async fn get_user(tx: &mut MySqlConnection, user_id: i64) -> sqlx::Result<User> {
+    let user_model: FilledUserModel = sqlx::query_as("SELECT u.id as id, u.name as name, u.display_name as display_name, u.description as description, t.id as theme_id, t.dark_mode as dark_mode, i.image_hash as icon_hash FROM users u JOIN themes t ON u.id = t.user_id LEFT OUTER JOIN icons i ON u.id = i.user_id  WHERE u.id = ?")
+        .bind(user_id)
+        .fetch_one(tx)
+        .await?;
+    Ok(user_model.into())
+}
+
 async fn fill_livestream_response(
     tx: &mut MySqlConnection,
+    owner: &User,
     livestream_model: LivestreamModel,
 ) -> sqlx::Result<Livestream> {
-    let owner_model: FilledUserModel = sqlx::query_as("SELECT u.id as id, u.name as name, u.display_name as display_name, u.description as description, t.id as theme_id, t.dark_mode as dark_mode, i.image_hash as icon_hash FROM users u JOIN themes t ON u.id = t.user_id LEFT OUTER JOIN icons i ON u.id = i.user_id  WHERE u.id = ?")
-        .bind(livestream_model.user_id)
-        .fetch_one(&mut *tx)
-        .await?;
-    let owner: User = owner_model.into();
-
-    let livestream_tag_models: Vec<LivestreamTagModel> =
-        sqlx::query_as("SELECT * FROM livestream_tags WHERE livestream_id = ?")
+    let livestream_tag_models: Vec<(i64,)> =
+        sqlx::query_as("SELECT tag_id FROM livestream_tags WHERE livestream_id = ?")
             .bind(livestream_model.id)
             .fetch_all(&mut *tx)
             .await?;
 
     let mut tags = Vec::with_capacity(livestream_tag_models.len());
-    for livestream_tag_model in livestream_tag_models {
+    for tag_id in livestream_tag_models {
         let tag_name = TAG_MODELS
             .read()
             .await
-            .get(&livestream_tag_model.tag_id)
+            .get(&tag_id.0)
             .cloned()
             .ok_or(sqlx::Error::RowNotFound)?;
         tags.push(Tag {
-            id: livestream_tag_model.tag_id,
+            id: tag_id.0,
             name: tag_name,
         });
     }
 
     Ok(Livestream {
         id: livestream_model.id,
-        owner,
+        owner: owner.clone(),
         title: livestream_model.title,
         tags,
         description: livestream_model.description,
@@ -933,9 +943,17 @@ async fn get_livecomments_handler(
         .fetch_all(&mut *tx)
         .await?;
 
+    let livestream_model: LivestreamModel =
+        sqlx::query_as("SELECT * FROM livestreams WHERE id = ?")
+            .bind(livestream_id)
+            .fetch_one(&mut *tx)
+            .await?;
+    let owner = get_user(&mut tx, livestream_model.user_id).await?;
+    let livestream = fill_livestream_response(&mut tx, &owner, livestream_model).await?;
+
     let mut livecomments = Vec::with_capacity(livecomment_models.len());
     for livecomment_model in livecomment_models {
-        let livecomment = fill_livecomment_response(&mut tx, livecomment_model).await?;
+        let livecomment = fill_livecomment_response2(&mut tx, &livestream, livecomment_model).await?;
         livecomments.push(livecomment);
     }
 
@@ -1200,12 +1218,34 @@ async fn fill_livecomment_response(
             .bind(livecomment_model.livestream_id)
             .fetch_one(&mut *tx)
             .await?;
-    let livestream = fill_livestream_response(&mut *tx, livestream_model).await?;
+    let owner = get_user(&mut *tx, livestream_model.user_id).await?;
+    let livestream = fill_livestream_response(&mut *tx, &owner, livestream_model).await?;
 
     Ok(Livecomment {
         id: livecomment_model.id,
         user: comment_owner,
         livestream,
+        comment: livecomment_model.comment,
+        tip: livecomment_model.tip,
+        created_at: livecomment_model.created_at,
+    })
+}
+
+async fn fill_livecomment_response2(
+    tx: &mut MySqlConnection,
+    livestream: &Livestream,
+    livecomment_model: LivecommentModel,
+) -> sqlx::Result<Livecomment> {
+    let comment_owner_model: FilledUserModel = sqlx::query_as("SELECT u.id as id, u.name as name, u.display_name as display_name, u.description as description, t.id as theme_id, t.dark_mode as dark_mode, i.image_hash as icon_hash FROM users u JOIN themes t ON u.id = t.user_id LEFT OUTER JOIN icons i ON u.id = i.user_id  WHERE u.id = ?")
+        .bind(livecomment_model.user_id)
+        .fetch_one(&mut *tx)
+        .await?;
+    let comment_owner = comment_owner_model.into();
+
+    Ok(Livecomment {
+        id: livecomment_model.id,
+        user: comment_owner,
+        livestream: livestream.clone(),
         comment: livecomment_model.comment,
         tip: livecomment_model.tip,
         created_at: livecomment_model.created_at,
@@ -1359,7 +1399,7 @@ async fn fill_reaction_response(
             .bind(reaction_model.livestream_id)
             .fetch_one(&mut *tx)
             .await?;
-    let livestream = fill_livestream_response(&mut *tx, livestream_model).await?;
+    let livestream = fill_livestream_response(&mut *tx, &user, livestream_model).await?;
 
     Ok(Reaction {
         id: reaction_model.id,
@@ -1408,7 +1448,7 @@ impl From<FilledUserModel> for User {
 
 }
 
-#[derive(Debug, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize)]
 struct User {
     id: i64,
     name: String,
@@ -1420,7 +1460,7 @@ struct User {
     icon_hash: String,
 }
 
-#[derive(Debug, serde::Deserialize, serde::Serialize)]
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 struct Theme {
     id: i64,
     dark_mode: bool,

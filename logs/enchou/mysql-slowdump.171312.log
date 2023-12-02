@@ -1,0 +1,69 @@
+Count: 124173  Time=0.00s (23s)  Lock=0.00s (0s)  Rows=1.0 (124173), isucon[isucon]@ip-192-168-0-11.ap-northeast-1.compute.internal
+  SELECT u.id as id, u.name as name, u.display_name as display_name, u.description as description, t.id as theme_id, t.dark_mode as dark_mode, i.image_hash as icon_hash FROM users u JOIN themes t ON u.id = t.user_id LEFT OUTER JOIN icons i ON u.id = i.user_id  WHERE u.id = N
+
+Count: 94520  Time=0.00s (12s)  Lock=0.00s (0s)  Rows=4.8 (454641), isucon[isucon]@ip-192-168-0-11.ap-northeast-1.compute.internal
+  SELECT tag_id FROM livestream_tags WHERE livestream_id = N
+
+Count: 694  Time=0.01s (7s)  Lock=0.00s (0s)  Rows=0.0 (0), isucon[isucon]@ip-192-168-0-11.ap-northeast-1.compute.internal
+  UPDATE reservation_slots SET slot = slot - N WHERE start_at >= N AND end_at <= N
+
+Count: 695  Time=0.01s (7s)  Lock=0.00s (0s)  Rows=10.1 (6990), isucon[isucon]@ip-192-168-0-11.ap-northeast-1.compute.internal
+  SELECT * FROM reservation_slots WHERE start_at >= N AND end_at <= N FOR UPDATE
+
+Count: 2795  Time=0.00s (5s)  Lock=0.00s (0s)  Rows=9.6 (26813), isucon[isucon]@ip-192-168-0-11.ap-northeast-1.compute.internal
+  SELECT * FROM livecomments WHERE livestream_id = N ORDER BY created_at DESC
+
+Count: 44544  Time=0.00s (3s)  Lock=0.00s (0s)  Rows=1.0 (44544), isucon[isucon]@ip-192-168-0-11.ap-northeast-1.compute.internal
+  SELECT * FROM livestreams WHERE id = N
+
+Count: 679  Time=0.00s (2s)  Lock=0.00s (0s)  Rows=0.0 (0), isucon[isucon]@ip-192-168-0-11.ap-northeast-1.compute.internal
+  DELETE FROM livecomments
+  WHERE
+  livestream_id = N AND
+  comment LIKE 'S'
+
+Count: 26298  Time=0.00s (2s)  Lock=0.00s (0s)  Rows=1.0 (26298), isucon[isucon]@ip-192-168-0-11.ap-northeast-1.compute.internal
+  SELECT * FROM users WHERE name = 'S' LIMIT N
+
+Count: 19402  Time=0.00s (2s)  Lock=0.00s (0s)  Rows=0.0 (0), isucon[isucon]@ip-192-168-0-11.ap-northeast-1.compute.internal
+  COMMIT
+
+Count: 544  Time=0.00s (1s)  Lock=0.00s (0s)  Rows=0.0 (0), isucon[isucon]@ip-192-168-0-11.ap-northeast-1.compute.internal
+  INSERT INTO icons (user_id, image, image_hash) VALUES (N, 'S', 'S')
+
+Count: 45712  Time=0.00s (1s)  Lock=0.00s (0s)  Rows=0.0 (0), isucon[isucon]@ip-192-168-0-11.ap-northeast-1.compute.internal
+  BEGIN
+
+Count: 6990  Time=0.00s (1s)  Lock=0.00s (0s)  Rows=1.0 (6990), isucon[isucon]@ip-192-168-0-11.ap-northeast-1.compute.internal
+  SELECT slot FROM reservation_slots WHERE start_at = N AND end_at = N
+
+Count: 26310  Time=0.00s (0s)  Lock=0.00s (0s)  Rows=0.0 (0), isucon[isucon]@ip-192-168-0-11.ap-northeast-1.compute.internal
+  ROLLBACK
+
+Count: 33  Time=0.02s (0s)  Lock=0.00s (0s)  Rows=674.1 (22246), isucon[isucon]@ip-192-168-0-11.ap-northeast-1.compute.internal
+  SELECT u.name, IFNULL(SUM(l2.tip), N) FROM users u
+  INNER JOIN livestreams l ON l.user_id = u.id
+  INNER JOIN livecomments l2 ON l2.livestream_id = l.id
+  GROUP BY u.name
+
+Count: 3392  Time=0.00s (0s)  Lock=0.00s (0s)  Rows=0.0 (0), isucon[isucon]@ip-192-168-0-11.ap-northeast-1.compute.internal
+  INSERT INTO livestream_tags (livestream_id, tag_id) VALUES (N, N)
+
+Count: 276  Time=0.00s (0s)  Lock=0.00s (0s)  Rows=2.1 (579), isucon[isucon]@ip-192-168-0-11.ap-northeast-1.compute.internal
+  SELECT * FROM livecomments WHERE livestream_id = N ORDER BY created_at DESC LIMIT N
+
+Count: 2829  Time=0.00s (0s)  Lock=0.00s (0s)  Rows=9.1 (25829), isucon[isucon]@ip-192-168-0-11.ap-northeast-1.compute.internal
+  SELECT * FROM reactions WHERE livestream_id = N ORDER BY created_at DESC
+
+Count: 43590  Time=0.00s (0s)  Lock=0.00s (0s)  Rows=0.0 (38), isucon[isucon]@ip-192-168-0-11.ap-northeast-1.compute.internal
+  #
+
+Count: 33  Time=0.01s (0s)  Lock=0.00s (0s)  Rows=660.9 (21809), isucon[isucon]@ip-192-168-0-11.ap-northeast-1.compute.internal
+  SELECT u.name, COUNT(*) FROM users u
+  INNER JOIN livestreams l ON l.user_id = u.id
+  INNER JOIN reactions r ON r.livestream_id = l.id
+  GROUP BY u.name
+
+Count: 3018  Time=0.00s (0s)  Lock=0.00s (0s)  Rows=0.0 (0), isucon[isucon]@ip-192-168-0-11.ap-northeast-1.compute.internal
+  INSERT INTO livecomments (user_id, livestream_id, comment, tip, created_at) VALUES (N, N, 'S', N, N)
+

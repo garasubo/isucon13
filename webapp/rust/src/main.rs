@@ -605,6 +605,7 @@ async fn search_livestreams_handler(
         livestream_models
     };
     let mut tags_memo: HashMap<i64, Vec<i64>> = HashMap::new();
+    let mut owners_memo: HashMap<i64, User> = HashMap::new();
     for chunk in livestream_models.chunks(10000) {
         let livestream_ids: Vec<i64> = chunk.iter().map(|ls| ls.id).collect();
         let mut query_builder = sqlx::query_builder::QueryBuilder::new(
@@ -616,30 +617,33 @@ async fn search_livestreams_handler(
         }
         separated.push_unseparated(")");
         let query = query_builder.build_query_as();
-        error!("sql: {}", query.sql());
         let livestream_tag_models: Vec<(i64, i64)> =
-            query.fetch_all(&mut *tx).await.or_else(|e| {
-                error!("failed to fetch livestream_tags: {:?}", e);
-                match e {
-                    sqlx::Error::RowNotFound => Ok(Vec::new()),
-                    _ => {
-                        Err(e)
-                    },
-                }
-            })?;
+            query.fetch_all(&mut *tx).await?;
         for livestream_tag_model in livestream_tag_models {
             tags_memo
                 .entry(livestream_tag_model.0)
                 .or_insert_with(Vec::new)
-                .push(livestream_tag_model.0);
+                .push(livestream_tag_model.1);
+        }
+        let user_ids: Vec<i64> = chunk.iter().map(|ls| ls.user_id).collect();
+        let mut query_builder = sqlx::query_builder::QueryBuilder::new("SELECT u.id as id, u.name as name, u.display_name as display_name, u.description as description, t.id as theme_id, t.dark_mode as dark_mode, i.image_hash as icon_hash FROM users u JOIN themes t ON u.id = t.user_id LEFT OUTER JOIN icons i ON u.id = i.user_id  WHERE u.id IN(");
+        let mut separated = query_builder.separated(", ");
+        for user_id in user_ids {
+            separated.push_bind(user_id);
+        }
+        separated.push_unseparated(")");
+        let query = query_builder.build_query_as();
+        let user_models: Vec<FilledUserModel> = query.fetch_all(&mut *tx).await?;
+        for user_model in user_models {
+            owners_memo.insert(user_model.id, user_model.into());
         }
     }
 
 
     let mut livestreams = Vec::with_capacity(livestream_models.len());
     for livestream_model in livestream_models {
-        let owner = get_user(&mut tx, livestream_model.user_id).await?;
-        let livestream = fill_livestream_response2(&owner, &tags_memo, livestream_model).await?;
+        let owner = owners_memo.get(&livestream_model.user_id).unwrap();
+        let livestream = fill_livestream_response2(owner, &tags_memo, livestream_model).await?;
         livestreams.push(livestream);
     }
     tx.commit().await?;

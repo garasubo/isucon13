@@ -16,6 +16,7 @@ lazy_static = "1.4.0"
 listenfd = "1"
 moka = { version = "0.12.1", features = ["future"] }
 num-traits = "0.2"
+redis = "0.23.3"
 serde = { version = "1", features = ["derive"] }
 sha2 = "0.10"
 sqlx = { version = "0.7", default-features = false, features = ["macros", "runtime-tokio", "mysql", "rust_decimal", "bigdecimal"] }

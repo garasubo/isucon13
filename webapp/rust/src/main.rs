@@ -32,6 +32,9 @@ lazy_static::lazy_static! {
         .max_capacity(100_0000)
         .time_to_live(Duration::from_secs(90))
         .build();
+
+    static ref TAG_MODELS: tokio::sync::RwLock<HashMap<i64, String>> = tokio::sync::RwLock::new(HashMap::new());
+    static ref TAG_MAP: tokio::sync::RwLock<HashMap<String, i64>> = tokio::sync::RwLock::new(HashMap::new());
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -175,6 +178,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
     };
 
+    {
+        // Fetch all tags from db
+        let tags: Vec<TagModel> = sqlx::query_as("SELECT * FROM tags")
+            .fetch_all(&pool)
+            .await?;
+        let mut lock = TAG_MODELS.write().await;
+        let mut lock2 = TAG_MAP.write().await;
+        for tag in tags {
+            lock.insert(tag.id, tag.name.clone());
+            lock2.insert(tag.name, tag.id);
+        }
+    }
+
     let app = axum::Router::new()
         // 初期化
         .route("/api/initialize", axum::routing::post(initialize_handler))
@@ -309,22 +325,12 @@ struct TagsResponse {
     tags: Vec<Tag>,
 }
 
-async fn get_tag_handler(
-    State(AppState { pool, .. }): State<AppState>,
-) -> Result<axum::Json<TagsResponse>, Error> {
-    let mut tx = pool.begin().await?;
-
-    let tag_models: Vec<TagModel> = sqlx::query_as("SELECT * FROM tags")
-        .fetch_all(&mut *tx)
-        .await?;
-
-    tx.commit().await?;
-
-    let tags = tag_models
-        .into_iter()
-        .map(|tag| Tag {
-            id: tag.id,
-            name: tag.name,
+async fn get_tag_handler() -> Result<axum::Json<TagsResponse>, Error> {
+    let tags = TAG_MODELS.read().await
+        .iter()
+        .map(|(&id, name)| Tag {
+            id,
+            name: name.clone(),
         })
         .collect();
     Ok(axum::Json(TagsResponse { tags }))
@@ -571,16 +577,13 @@ async fn search_livestreams_handler(
         sqlx::query_as(&query).fetch_all(&mut *tx).await?
     } else {
         // タグによる取得
-        let tag_id_list: Vec<i64> = sqlx::query_scalar("SELECT id FROM tags WHERE name = ?")
-            .bind(key_tag_name)
-            .fetch_all(&mut *tx)
-            .await?;
+        let tag_id = TAG_MAP.read().await.get(&key_tag_name).cloned();
 
         let mut query_builder = sqlx::query_builder::QueryBuilder::new(
             "SELECT * FROM livestream_tags WHERE tag_id IN (",
         );
         let mut separated = query_builder.separated(", ");
-        for tag_id in tag_id_list {
+        if let Some(tag_id) = tag_id {
             separated.push_bind(tag_id);
         }
         separated.push_unseparated(") ORDER BY livestream_id DESC");
@@ -818,13 +821,15 @@ async fn fill_livestream_response(
 
     let mut tags = Vec::with_capacity(livestream_tag_models.len());
     for livestream_tag_model in livestream_tag_models {
-        let tag_model: TagModel = sqlx::query_as("SELECT * FROM tags WHERE id = ?")
-            .bind(livestream_tag_model.tag_id)
-            .fetch_one(&mut *tx)
-            .await?;
+        let tag_name = TAG_MODELS
+            .read()
+            .await
+            .get(&livestream_tag_model.tag_id)
+            .cloned()
+            .ok_or(sqlx::Error::RowNotFound)?;
         tags.push(Tag {
-            id: tag_model.id,
-            name: tag_model.name,
+            id: livestream_tag_model.tag_id,
+            name: tag_name,
         });
     }
 

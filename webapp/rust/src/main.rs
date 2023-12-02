@@ -10,7 +10,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use num_traits::ToPrimitive;
 use sqlx::types::BigDecimal;
-use tracing::info;
+use tracing::{error, info};
 use uuid::Uuid;
 
 const DEFAULT_SESSION_ID_KEY: &str = "SESSIONID";
@@ -566,6 +566,7 @@ async fn search_livestreams_handler(
         limit,
     }): Query<SearchLivestreamsQuery>,
 ) -> Result<axum::Json<Vec<Livestream>>, Error> {
+    use sqlx::Execute;
     let mut tx = pool.begin().await?;
 
     let livestream_models: Vec<LivestreamModel> = if key_tag_name.is_empty() {
@@ -603,14 +604,48 @@ async fn search_livestreams_handler(
         }
         livestream_models
     };
+    let mut tags_memo: HashMap<i64, Vec<i64>> = HashMap::new();
+    let mut owners_memo: HashMap<i64, User> = HashMap::new();
+    for chunk in livestream_models.chunks(10000) {
+        let livestream_ids: Vec<i64> = chunk.iter().map(|ls| ls.id).collect();
+        let mut query_builder = sqlx::query_builder::QueryBuilder::new(
+            "SELECT livestream_id, tag_id FROM livestream_tags WHERE livestream_id IN (",
+        );
+        let mut separated = query_builder.separated(", ");
+        for livestream_id in livestream_ids {
+            separated.push_bind(livestream_id);
+        }
+        separated.push_unseparated(")");
+        let query = query_builder.build_query_as();
+        let livestream_tag_models: Vec<(i64, i64)> =
+            query.fetch_all(&mut *tx).await?;
+        for livestream_tag_model in livestream_tag_models {
+            tags_memo
+                .entry(livestream_tag_model.0)
+                .or_insert_with(Vec::new)
+                .push(livestream_tag_model.1);
+        }
+        let user_ids: Vec<i64> = chunk.iter().map(|ls| ls.user_id).collect();
+        let mut query_builder = sqlx::query_builder::QueryBuilder::new("SELECT u.id as id, u.name as name, u.display_name as display_name, u.description as description, t.id as theme_id, t.dark_mode as dark_mode, i.image_hash as icon_hash FROM users u JOIN themes t ON u.id = t.user_id LEFT OUTER JOIN icons i ON u.id = i.user_id  WHERE u.id IN(");
+        let mut separated = query_builder.separated(", ");
+        for user_id in user_ids {
+            separated.push_bind(user_id);
+        }
+        separated.push_unseparated(")");
+        let query = query_builder.build_query_as();
+        let user_models: Vec<FilledUserModel> = query.fetch_all(&mut *tx).await?;
+        for user_model in user_models {
+            owners_memo.insert(user_model.id, user_model.into());
+        }
+    }
+
 
     let mut livestreams = Vec::with_capacity(livestream_models.len());
     for livestream_model in livestream_models {
-        let owner = get_user(&mut tx, livestream_model.user_id).await?;
-        let livestream = fill_livestream_response(&mut tx, &owner, livestream_model).await?;
+        let owner = owners_memo.get(&livestream_model.user_id).unwrap();
+        let livestream = fill_livestream_response2(owner, &tags_memo, livestream_model).await?;
         livestreams.push(livestream);
     }
-
     tx.commit().await?;
 
     Ok(axum::Json(livestreams))
@@ -818,6 +853,40 @@ async fn get_user(tx: &mut MySqlConnection, user_id: i64) -> sqlx::Result<User> 
     Ok(user_model.into())
 }
 
+async fn fill_livestream_response2(
+    owner: &User,
+    tags_memo: &HashMap<i64, Vec<i64>>,
+    livestream_model: LivestreamModel,
+) -> sqlx::Result<Livestream> {
+    let mut tags = Vec::new();
+    let tag_ids = tags_memo.get(&livestream_model.id);
+    if let Some(tag_ids) = tag_ids {
+        for &tag_id in tag_ids {
+            let tag_name = TAG_MODELS
+                .read()
+                .await
+                .get(&tag_id)
+                .cloned()
+                .ok_or(sqlx::Error::RowNotFound)?;
+            tags.push(Tag {
+                id: tag_id,
+                name: tag_name,
+            });
+        }
+    }
+
+    Ok(Livestream {
+        id: livestream_model.id,
+        owner: owner.clone(),
+        title: livestream_model.title,
+        tags,
+        description: livestream_model.description,
+        playlist_url: livestream_model.playlist_url,
+        thumbnail_url: livestream_model.thumbnail_url,
+        start_at: livestream_model.start_at,
+        end_at: livestream_model.end_at,
+    })
+}
 async fn fill_livestream_response(
     tx: &mut MySqlConnection,
     owner: &User,

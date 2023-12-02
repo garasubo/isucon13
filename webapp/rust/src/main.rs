@@ -5,13 +5,14 @@ use axum_extra::extract::cookie::SignedCookieJar;
 use chrono::{DateTime, NaiveDate, TimeZone, Utc};
 use sqlx::mysql::{MySqlConnection, MySqlPool};
 use std::borrow::Cow;
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use num_traits::ToPrimitive;
 use sqlx::types::BigDecimal;
 use tracing::info;
 use uuid::Uuid;
+use redis::{self, Commands};
+use std::collections::HashMap;
 
 const DEFAULT_SESSION_ID_KEY: &str = "SESSIONID";
 const DEFUALT_SESSION_EXPIRES_KEY: &str = "EXPIRES";
@@ -35,6 +36,146 @@ lazy_static::lazy_static! {
 
     static ref TAG_MODELS: tokio::sync::RwLock<HashMap<i64, String>> = tokio::sync::RwLock::new(HashMap::new());
     static ref TAG_MAP: tokio::sync::RwLock<HashMap<String, i64>> = tokio::sync::RwLock::new(HashMap::new());
+}
+
+pub struct RedisCache {
+    #[allow(unused)]
+    client: redis::Client,
+    conn: redis::Connection,
+}
+
+pub struct CacheGuard {
+    id: i64,
+    #[allow(unused)]
+    conn: redis::Connection,
+}
+
+impl Drop for CacheGuard {
+    fn drop(&mut self) {
+        let key = format!("flock:{}", self.id);
+        self.conn
+            .del::<_, i64>(&key)
+            .expect("release lock of redis");
+    }
+}
+
+impl RedisCache {
+    pub fn new() -> Self {
+        const REDIS_URL: &str = "redis://192.168.0.12:6379/";
+
+        let client = redis::Client::open(REDIS_URL).expect("failed to create client");
+        let conn = client
+            .get_connection()
+            .expect("failed to create connection");
+        Self { client, conn }
+    }
+
+    pub fn flushall(&mut self) {
+        redis::cmd("FLUSHALL").query::<()>(&mut self.conn).unwrap();
+    }
+
+    pub fn init_livestream(&mut self,
+                           livestream_id: i64,
+    ) {
+        let livestream_key = Self::livestream_key(livestream_id);
+        self.conn.zadd::<_, _, _, ()>("lmscore", &livestream_key, 0).expect("redis works");
+    }
+
+    pub fn init_user(&mut self,
+                   username: &str,
+    ) {
+        self.conn.zadd::<_, _, _, ()>("umscore", username, 0).expect("redis works");
+    }
+
+    fn livestream_key(livestream_id: i64) -> String {
+        format!("{:08}", livestream_id)
+    }
+
+    // 1-indexed u64 value. The smaller is the better.
+    //
+    // ranking.sort_by(|a, b| {
+    //     a.score
+    //         .cmp(&b.score)
+    //         .then_with(|| a.livestream_id.cmp(&b.livestream_id))
+    // });
+    // let rpos = ranking
+    //     .iter()
+    //     .rposition(|entry| entry.livestream_id == livestream_id)
+    //     .unwrap();
+    // let rank = (ranking.len() - rpos) as i64;
+    //
+    // lmscore: (livestream_key, score) の dict order で ZCOUNT - ZRANK + 1 をとる.
+    pub fn get_livestream_rank(&mut self,
+                               livestream_id: i64,
+    ) -> Option<i64> {
+        let key = format!("lmscore");
+        let livestream_key = Self::livestream_key(livestream_id);
+        if let Ok(val) = self.conn.zrank::<_, _, i64>(&key, &livestream_key) {
+            if let Ok(all) = self.conn.zcount::<_, &str, &str, i64>(&key, "-inf", "+inf") {
+                Some(all - val)
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }
+
+    // 1-indexed u64 value. The smaller is the better.
+    //
+    // ranking.sort_by(|a, b| {
+    //     a.score
+    //         .cmp(&b.score)
+    //         .then_with(|| a.username.cmp(&b.username))
+    // });
+    // let rpos = ranking
+    //     .iter()
+    //     .rposition(|entry| entry.username == username)
+    //     .unwrap();
+    // let rank = (ranking.len() - rpos) as i64;
+    //
+    // umscore: (-score, username) の dict order で ZCOUNT - ZRANK + 1 をとる.
+    pub fn get_user_rank(&mut self,
+                         _user_id: i64,
+                         username: &str,
+    ) -> Option<i64> {
+        let key = format!("umscore");
+        if let Ok(val) = self.conn.zrank::<_, _, i64>(&key, username) {
+            if let Ok(all) = self.conn.zcount::<_, &str, &str, i64>(&key, "-inf", "+inf") {
+                Some(all - val)
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }
+
+    pub fn add_tip(&mut self,
+                   livestream_id: i64,
+                   username: &str,
+                   tip: i64,
+    ) {
+        self.add_value(livestream_id, username, tip);
+    }
+
+    pub fn add_reactions(&mut self,
+                         livestream_id: i64,
+                         username: &str,
+                         count: i64,
+    ) {
+        self.add_value(livestream_id, username, count);
+    }
+
+    pub fn add_value(&mut self,
+                   livestream_id: i64,
+                   username: &str,
+                   value: i64,
+    ) {
+        let livestream_key = Self::livestream_key(livestream_id);
+        self.conn.zadd::<_, _, _, ()>("lmscore", &livestream_key, value).expect("redis works");
+        self.conn.zadd::<_, _, _, ()>("umscore", username, value).expect("redis works");
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -135,7 +276,9 @@ fn build_mysql_options() -> sqlx::mysql::MySqlConnectOptions {
     options
 }
 
-async fn initialize_handler() -> Result<axum::Json<InitializeResponse>, Error> {
+async fn initialize_handler(
+    State(AppState { pool, .. }): State<AppState>,
+) -> Result<axum::Json<InitializeResponse>, Error> {
     ICON_HASH_CACHE.invalidate_all();
     let output = tokio::process::Command::new("../sql/init.sh")
         .output()
@@ -146,6 +289,71 @@ async fn initialize_handler() -> Result<axum::Json<InitializeResponse>, Error> {
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr),
         )));
+    }
+
+    {
+        let mut redis_cache = RedisCache::new();
+        let mut tx = pool.begin().await?;
+
+        redis_cache.flushall();
+
+        let user_models: Vec<UserModel> = sqlx::query_as("Select * FROM users").fetch_all(&mut *tx).await?;
+        // let mut usernames: HashMap<i64, String> = HashMap::new();
+        for user_model in user_models {
+            // usernames.insert(user_model.id, user_model.name.to_string());
+            redis_cache.init_user(&user_model.name);
+        }
+
+        let livestream_models: Vec<LivestreamModel> = sqlx::query_as("Select * FROM livestreams").fetch_all(&mut *tx).await?;
+        for livestream_model in livestream_models {
+            redis_cache.init_livestream(livestream_model.id);
+        }
+
+        let livecomment_models: Vec<LivecommentModel> = sqlx::query_as("SELECT * FROM livecomments")
+            .fetch_all(&mut *tx)
+            .await?;
+
+        let mut tips: HashMap<i64, i64> = HashMap::new();
+        for livecomment_model in livecomment_models {
+            *tips.entry(livecomment_model.livestream_id).or_default() += livecomment_model.tip;
+        }
+
+        let reaction_models: Vec<ReactionModel> = sqlx::query_as("SELECT * from reactions")
+            .fetch_all(&mut *tx)
+            .await?;
+
+        let mut reactions: HashMap<i64, i64> = HashMap::new();
+        for reaction_model in reaction_models {
+            *reactions.entry(reaction_model.livestream_id).or_default() += 1;
+        }
+
+        for (livestream_id, tip) in tips {
+            let livestream_model: LivestreamModel =
+                sqlx::query_as("SELECT * FROM livestreams WHERE id = ?")
+                .bind(livestream_id)
+                .fetch_one(&mut *tx)
+                .await?;
+            let owner_model: UserModel = sqlx::query_as("SELECT * FROM users WHERE id = ?")
+                .bind(livestream_model.user_id)
+                .fetch_one(&mut *tx)
+                .await?;
+
+            redis_cache.add_tip(livestream_id, &owner_model.name, tip);
+        }
+
+        for (livestream_id, count) in reactions {
+            let livestream_model: LivestreamModel =
+                sqlx::query_as("SELECT * FROM livestreams WHERE id = ?")
+                .bind(livestream_id)
+                .fetch_one(&mut *tx)
+                .await?;
+            let owner_model: UserModel = sqlx::query_as("SELECT * FROM users WHERE id = ?")
+                .bind(livestream_model.user_id)
+                .fetch_one(&mut *tx)
+                .await?;
+
+            redis_cache.add_reactions(livestream_id, &owner_model.name, count);
+        }
     }
 
     Ok(axum::Json(InitializeResponse { language: "rust" }))
@@ -544,6 +752,9 @@ async fn reserve_livestream_handler(
     .await?;
 
     tx.commit().await?;
+
+    let mut redis_cache = RedisCache::new();
+    redis_cache.init_livestream(livestream_id);
 
     Ok((StatusCode::CREATED, axum::Json(livestream)))
 }
@@ -1053,7 +1264,17 @@ async fn post_livecomment_handler(
     )
     .await?;
 
+    let owner_model: UserModel = sqlx::query_as("SELECT * FROM users WHERE id = ?")
+        .bind(livestream_model.user_id)
+        .fetch_one(&mut *tx)
+        .await?;
+
     tx.commit().await?;
+
+    if req.tip != 0 {
+        let mut redis_cache = RedisCache::new();
+        redis_cache.add_tip(livestream_id, &owner_model.name, req.tip);
+    }
 
     Ok((StatusCode::CREATED, axum::Json(livecomment)))
 }
@@ -1339,7 +1560,20 @@ async fn post_reaction_handler(
     )
     .await?;
 
+    let livestream_model: LivestreamModel =
+        sqlx::query_as("SELECT * FROM livestreams WHERE id = ?")
+            .bind(livestream_id)
+            .fetch_one(&mut *tx)
+            .await?;
+    let owner_model: UserModel = sqlx::query_as("SELECT * FROM users WHERE id = ?")
+        .bind(livestream_model.user_id)
+        .fetch_one(&mut *tx)
+        .await?;
+
     tx.commit().await?;
+
+    let mut redis_cache = RedisCache::new();
+    redis_cache.add_reactions(livestream_id, &owner_model.name, 1);
 
     Ok((StatusCode::CREATED, axum::Json(reaction)))
 }
@@ -1641,6 +1875,9 @@ async fn register_handler(
 
     tx.commit().await?;
 
+    let mut redis_cache = RedisCache::new();
+    redis_cache.init_user(&user.name);
+
     Ok((StatusCode::CREATED, axum::Json(user)))
 }
 
@@ -1779,11 +2016,11 @@ struct LivestreamStatistics {
     max_tip: i64,
 }
 
-#[derive(Debug)]
-struct LivestreamRankingEntry {
-    livestream_id: i64,
-    score: i64,
-}
+// #[derive(Debug)]
+// struct LivestreamRankingEntry {
+//     livestream_id: i64,
+//     score: i64,
+// }
 
 #[derive(Debug, serde::Serialize)]
 struct UserStatistics {
@@ -1795,11 +2032,11 @@ struct UserStatistics {
     favorite_emoji: String,
 }
 
-#[derive(Debug)]
-struct UserRankingEntry {
-    username: String,
-    score: i64,
-}
+// #[derive(Debug)]
+// struct UserRankingEntry {
+//     username: String,
+//     score: i64,
+// }
 
 /// MySQL で COUNT()、SUM() 等を使って DECIMAL 型の値になったものを i64 に変換するための構造体。
 #[derive(Debug)]
@@ -1867,59 +2104,8 @@ async fn get_user_statistics_handler(
         .ok_or(Error::BadRequest("".into()))?;
 
     // ランク算出
-    let users: Vec<UserModel> = sqlx::query_as("SELECT * FROM users")
-        .fetch_all(&mut *tx)
-        .await?;
-
-    let mut ranking = Vec::new();
-    let mut score_map = HashMap::new();
-    let query = r#"
-        SELECT u.name, COUNT(*) FROM users u
-        INNER JOIN livestreams l ON l.user_id = u.id
-        INNER JOIN reactions r ON r.livestream_id = l.id
-        GROUP BY u.name
-        "#;
-    let reactions: Vec<(String, i64)> = sqlx::query_as(query).fetch_all(&mut *tx).await?;
-
-    for (username, score) in reactions.iter() {
-        score_map.insert(username.to_string(), *score);
-    }
-
-    let query = r#"
-        SELECT u.name, IFNULL(SUM(l2.tip), 0) FROM users u
-        INNER JOIN livestreams l ON l.user_id = u.id
-        INNER JOIN livecomments l2 ON l2.livestream_id = l.id
-        GROUP BY u.name
-        "#;
-    let tips: Vec<(String, BigDecimal)> = sqlx::query_as(query).fetch_all(&mut *tx).await?;
-
-    for (username, score) in tips.iter() {
-        let score = score.to_i64().unwrap();
-        if let Some(s) = score_map.get_mut(username) {
-            *s += score;
-        } else {
-            score_map.insert(username.to_string(), score);
-        }
-    }
-    for user in users {
-        let score = score_map.get(&user.name).copied().unwrap_or(0);
-        ranking.push(UserRankingEntry {
-            username: user.name,
-            score,
-        });
-    }
-
-    ranking.sort_by(|a, b| {
-        a.score
-            .cmp(&b.score)
-            .then_with(|| a.username.cmp(&b.username))
-    });
-
-    let rpos = ranking
-        .iter()
-        .rposition(|entry| entry.username == username)
-        .unwrap();
-    let rank = (ranking.len() - rpos) as i64;
+    let mut redis_cache = RedisCache::new();
+    let rank = redis_cache.get_user_rank(user.id, &user.name).expect("redis works");
 
     // リアクション数
     let query = r"#
@@ -1990,42 +2176,8 @@ async fn get_livestream_statistics_handler(
         .await?
         .ok_or(Error::BadRequest("".into()))?;
 
-    let livestreams: Vec<LivestreamModel> = sqlx::query_as("SELECT * FROM livestreams")
-        .fetch_all(&mut *tx)
-        .await?;
-
-    // ランク算出
-    let mut ranking = Vec::new();
-
-    let reactions_map: Vec<(i64, i64)> = sqlx::query_as("SELECT l.id, COUNT(*) FROM livestreams l INNER JOIN reactions r ON l.id = r.livestream_id GROUP BY l.id")
-        .fetch_all(&mut *tx)
-        .await?;
-    let total_tip_map: Vec<(i64, BigDecimal)> = sqlx::query_as("SELECT l.id, IFNULL(SUM(l2.tip), 0) FROM livestreams l INNER JOIN livecomments l2 ON l.id = l2.livestream_id GROUP BY l.id")
-        .fetch_all(&mut *tx)
-        .await?;
-
-    let reactions_map: HashMap<i64, i64> = reactions_map.into_iter().collect();
-    let total_tip_map: HashMap<i64, i64> = total_tip_map.into_iter().map(|(x, y)| (x, y.to_i64().unwrap_or(0))).collect();
-
-    for livestream in livestreams {
-
-        let score = reactions_map.get(&livestream.id).copied().unwrap_or(0) + total_tip_map.get(&livestream.id).copied().unwrap_or(0);
-        ranking.push(LivestreamRankingEntry {
-            livestream_id: livestream.id,
-            score,
-        })
-    }
-    ranking.sort_by(|a, b| {
-        a.score
-            .cmp(&b.score)
-            .then_with(|| a.livestream_id.cmp(&b.livestream_id))
-    });
-
-    let rpos = ranking
-        .iter()
-        .rposition(|entry| entry.livestream_id == livestream_id)
-        .unwrap();
-    let rank = (ranking.len() - rpos) as i64;
+    let mut redis_cache = RedisCache::new();
+    let rank = redis_cache.get_livestream_rank(livestream_id).expect("redis works");
 
     // 視聴者数算出
     let MysqlDecimal(viewers_count) = sqlx::query_scalar("SELECT COUNT(*) FROM livestreams l INNER JOIN livestream_viewers_history h ON h.livestream_id = l.id WHERE l.id = ?")
